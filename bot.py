@@ -12,10 +12,10 @@ async def webhook():
     return 'ok'
 
 async def set_webhook():
-    # Пока оставь так, потом поменяем на реальный URL
-    webhook_url = "https://твой-сервис.onrender.com/webhook"
+    webhook_url = "https://menu-master-bot.onrender.com/webhook"
     await bot.set_webhook(webhook_url)
 
 if __name__ == "__main__":
     asyncio.run(set_webhook())
-    app.run(host='0.0.0.0', port=5000)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host='0.0.0.0', port=port)
