@@ -2,15 +2,18 @@ import asyncio
 import logging
 import os
 from datetime import datetime, timedelta
+from io import BytesIO
 
 import psycopg2
+import qrcode
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (
-    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
+    Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton,
+    BufferedInputFile
 )
 from aiogram.client.default import DefaultBotProperties
 from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
@@ -18,59 +21,35 @@ from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_applicati
 # === НАСТРОЙКИ ===
 BOT_TOKEN = "8890056509:AAFvSsiaD0pZPHGRAa3iWRwfNdae3II7ttc"
 ADMIN_ID = 7758384445
+BOT_USERNAME = "Aura_Muqimjon_bot"  # без @
 WEBHOOK_URL = "https://menu-master-bot.onrender.com/webhook"
 PAYMENT_PHONE = "993337070"
-PRICE_BASIC = 50        # без дизайна
-PRICE_DESIGN = 60       # с дизайном
+PRICE_BASIC = 50
+PRICE_DESIGN = 60
 SUBSCRIPTION_DAYS = 30
 
-# === ДИЗАЙНЫ (темы для клиентского меню) ===
+# === ДИЗАЙНЫ ===
 DESIGNS = {
-    "classic": {
-        "name": "📋 Классик",
-        "desc": "Строгий деловой стиль",
-        "header": "━━━━━━━━━━━━━━━",
-        "item": "▫️",
-        "title": "🍽 Меню",
-        "price": "сомони",
-        "footer": "━━━━━━━━━━━━━━━",
-    },
-    "modern": {
-        "name": "⚡ Модерн",
-        "desc": "Современный стиль с эмодзи",
-        "header": "🔥🔥🔥🔥🔥🔥🔥",
-        "item": "⚡",
-        "title": "🍔 МЕНЮ БУДУЩЕГО",
-        "price": " TJS",
-        "footer": "🔥🔥🔥🔥🔥🔥🔥",
-    },
-    "elegant": {
-        "name": "✨ Элегант",
-        "desc": "Роскошный премиум-стиль",
-        "header": "✦ ─────────── ✦",
-        "item": "✨",
-        "title": "👑 Изысканное меню",
-        "price": "сомони",
-        "footer": "✦ ─────────── ✦",
-    },
-    "fun": {
-        "name": "🎉 Весёлый",
-        "desc": "Яркий и дружелюбный",
-        "header": "🎉🎊🎈🎊🎉",
-        "item": "🌟",
-        "title": "😋 Что покушаем?",
-        "price": "сом",
-        "footer": "🎈🎊🎉🎊🎈",
-    },
-    "night": {
-        "name": "🌙 Ночной",
-        "desc": "Тёмный стиль для гурманов",
-        "header": "🌙 ─ ─ ─ ─ ─ 🌙",
-        "item": "🍷",
-        "title": "🌙 Ночное меню",
-        "price": "сомони",
-        "footer": "🌙 ─ ─ ─ ─ ─ 🌙",
-    },
+    "classic": {"name": "📋 Классик", "desc": "Строгий стиль",
+                "header": "━━━━━━━━━━━━━━━", "item": "▫️",
+                "title": "🍽 Меню", "price": "сомони",
+                "footer": "━━━━━━━━━━━━━━━"},
+    "modern": {"name": "⚡ Модерн", "desc": "Современный",
+               "header": "🔥🔥🔥🔥🔥🔥🔥", "item": "⚡",
+               "title": "🍔 МЕНЮ БУДУЩЕГО", "price": " TJS",
+               "footer": "🔥🔥🔥🔥🔥🔥🔥"},
+    "elegant": {"name": "✨ Элегант", "desc": "Премиум",
+                "header": "✦ ─────────── ✦", "item": "✨",
+                "title": "👑 Изысканное меню", "price": "сомони",
+                "footer": "✦ ─────────── ✦"},
+    "fun": {"name": "🎉 Весёлый", "desc": "Яркий",
+            "header": "🎉🎊🎈🎊🎉", "item": "🌟",
+            "title": "😋 Что покушаем?", "price": "сом",
+            "footer": "🎈🎊🎉🎊🎈"},
+    "night": {"name": "🌙 Ночной", "desc": "Тёмный",
+              "header": "🌙 ─ ─ ─ ─ ─ 🌙", "item": "🍷",
+              "title": "🌙 Ночное меню", "price": "сомони",
+              "footer": "🌙 ─ ─ ─ ─ ─ 🌙"},
 }
 
 # === ИНИЦИАЛИЗАЦИЯ ===
@@ -99,7 +78,6 @@ CREATE TABLE IF NOT EXISTS rest (
 )
 ''')
 
-# На случай, если таблица уже была — добавим колонки
 for col, coltype in [("design", "TEXT DEFAULT 'none'"), ("active_design", "TEXT DEFAULT 'classic'")]:
     try:
         cursor.execute(f"ALTER TABLE rest ADD COLUMN IF NOT EXISTS {col} {coltype}")
@@ -208,10 +186,6 @@ def activate_subscription(rest_id, days=30):
     conn.commit()
     return until
 
-def deactivate_subscription(rest_id):
-    cursor.execute("UPDATE rest SET subscribed=0 WHERE id=%s", (rest_id,))
-    conn.commit()
-
 def set_design(rest_id, design_key):
     cursor.execute("UPDATE rest SET design=%s, active_design=%s WHERE id=%s",
                    (design_key, design_key, rest_id))
@@ -222,7 +196,6 @@ def clear_design(rest_id):
     conn.commit()
 
 def get_price(r):
-    """Если есть дизайн — 60, иначе 50"""
     return PRICE_DESIGN if r and r[8] and r[8] != 'none' else PRICE_BASIC
 
 def add_payment(rest_id, owner_id, amount, receipt_file_id):
@@ -244,12 +217,47 @@ def get_pending_payments():
     cursor.execute("SELECT * FROM payments WHERE status='pending'")
     return cursor.fetchall()
 
+def generate_qr(rest_id):
+    """Генерирует QR-код со ссылкой на ресторан"""
+    url = f"https://t.me/{BOT_USERNAME}?start=rest_{rest_id}"
+    qr = qrcode.QRCode(version=1, box_size=10, border=4)
+    qr.add_data(url)
+    qr.make(fit=True)
+    img = qr.make_image(fill_color="black", back_color="white")
+    buf = BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+    return buf, url
+
+def show_menu_for_restaurant(r):
+    """Возвращает (текст, клавиатура) для меню ресторана с учётом дизайна"""
+    items = get_menu_items(r[0])
+    if not items:
+        return None, None
+    design_key = r[9] if r[9] and r[9] in DESIGNS else 'classic'
+    d = DESIGNS[design_key]
+    text = (f"{d['header']}\n"
+            f"🍴 <b>{r[1]}</b>\n"
+            f"{d['title']}\n"
+            f"{d['footer']}\n"
+            f"Выберите блюдо:")
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
+    for item in items:
+        keyboard.inline_keyboard.append([
+            InlineKeyboardButton(
+                text=f"{d['item']} {item[2]} — {item[4]} {d['price']}",
+                callback_data=f"order_item_{item[0]}"
+            )
+        ])
+    return text, keyboard
+
 # === КЛАВИАТУРЫ ===
 def cabinet_keyboard(has_design):
     kb = [
         [InlineKeyboardButton(text="📝 Добавить блюдо", callback_data="add_item")],
         [InlineKeyboardButton(text="🍽 Мои блюда", callback_data="my_items")],
         [InlineKeyboardButton(text="🛒 Заказы", callback_data="my_orders")],
+        [InlineKeyboardButton(text="📱 Мой QR-код", callback_data="my_qr")],
     ]
     if has_design:
         kb.append([InlineKeyboardButton(text="🎨 Сменить дизайн", callback_data="choose_design")])
@@ -292,7 +300,7 @@ async def cmd_admin(message: Message):
     text = "📋 <b>Список ресторанов:</b>\n\n"
     for r in restaurants:
         active = "✅ Активна" if is_subscription_active(r) else "❌ Не активна"
-        block = "🚫 Заблокирован" if r[6] == 1 else "🟢 ОК"
+        block = "🚫" if r[6] == 1 else "🟢"
         design = DESIGNS.get(r[8], {}).get('name', '—') if r[8] and r[8] != 'none' else '—'
         text += (f"<b>ID:</b> {r[0]}\n"
                  f"<b>Название:</b> {r[1]}\n"
@@ -413,6 +421,26 @@ async def cmd_pending(message: Message):
             reply_markup=payment_confirm_keyboard(p[0])
         )
 
+@router.message(Command("qr"))
+async def cmd_qr(message: Message):
+    if message.from_user.id != ADMIN_ID:
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        await message.answer("Формат: /qr ID\nНапример: /qr 1")
+        return
+    rest_id = int(args[1])
+    r = get_restaurant_by_id(rest_id)
+    if not r:
+        await message.answer(f"Ресторан с ID {rest_id} не найден.")
+        return
+    buf, url = generate_qr(rest_id)
+    photo = BufferedInputFile(buf.read(), filename=f"qr_{rest_id}.png")
+    await message.answer_photo(
+        photo,
+        caption=f"📱 QR для ресторана «{r[1]}»\n🔗 {url}"
+    )
+
 # === ПОДТВЕРЖДЕНИЕ ПЛАТЕЖА ===
 @router.callback_query(F.data.startswith("confirm_pay_"))
 async def confirm_payment(callback: CallbackQuery):
@@ -513,7 +541,30 @@ async def back_to_cabinet(callback: CallbackQuery):
     )
     await callback.answer()
 
-# === ВЫБОР ДИЗАЙНА ===
+# === QR ===
+@router.callback_query(F.data == "my_qr")
+async def show_my_qr(callback: CallbackQuery):
+    r = get_restaurant_by_owner(callback.from_user.id)
+    if not r or not is_subscription_active(r):
+        await callback.answer("Сначала активируйте подписку!", show_alert=True)
+        return
+    buf, url = generate_qr(r[0])
+    photo = BufferedInputFile(buf.read(), filename=f"qr_{r[0]}.png")
+    await callback.message.answer_photo(
+        photo,
+        caption=(
+            f"📱 <b>QR-код ресторана «{r[1]}»</b>\n\n"
+            f"🔗 Ссылка: <code>{url}</code>\n\n"
+            f"<b>Как использовать:</b>\n"
+            f"• Распечатайте и положите на столики\n"
+            f"• Наклейте на входную дверь\n"
+            f"• Отправьте клиентам в соцсетях\n\n"
+            f"Клиент сканирует → сразу попадает в ваше меню 🎉"
+        )
+    )
+    await callback.answer()
+
+# === ДИЗАЙН ===
 @router.callback_query(F.data == "choose_design")
 async def choose_design(callback: CallbackQuery):
     r = get_restaurant_by_owner(callback.from_user.id)
@@ -522,8 +573,8 @@ async def choose_design(callback: CallbackQuery):
         return
     text = ("🎨 <b>Выберите дизайн меню</b>\n\n"
             "Каждый дизайн меняет вид меню для клиентов.\n"
-            "💵 С дизайном подписка: <b>60 сомони/мес</b>\n"
-            "💵 Без дизайна: <b>50 сомони/мес</b>\n\n"
+            f"💵 С дизайном: <b>{PRICE_DESIGN} сомони/мес</b>\n"
+            f"💵 Без дизайна: <b>{PRICE_BASIC} сомони/мес</b>\n\n"
             "Выберите стиль:")
     await callback.message.edit_text(text, reply_markup=design_choice_keyboard())
     await callback.answer()
@@ -542,9 +593,8 @@ async def set_design_handler(callback: CallbackQuery):
     d = DESIGNS[key]
     await callback.message.edit_text(
         f"✅ Дизайн установлен: <b>{d['name']}</b>\n\n"
-        f"Теперь меню для ваших клиентов будет выглядеть в этом стиле.\n\n"
-        f"⚠️ Не забудьте оплатить <b>{PRICE_DESIGN} сомони</b> "
-        f"(включая 10 сомони за дизайн).",
+        f"Теперь меню для ваших клиентов будет в этом стиле.\n\n"
+        f"⚠️ Не забудьте оплатить <b>{PRICE_DESIGN} сомони</b>.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_cabinet")]
         ])
@@ -559,7 +609,7 @@ async def remove_design_handler(callback: CallbackQuery):
         return
     clear_design(r[0])
     await callback.message.edit_text(
-        "✅ Дизайн убран. Теперь тариф: <b>50 сомони/мес</b>.",
+        f"✅ Дизайн убран. Тариф: <b>{PRICE_BASIC} сомони/мес</b>.",
         reply_markup=InlineKeyboardMarkup(inline_keyboard=[
             [InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_cabinet")]
         ])
@@ -595,8 +645,7 @@ async def handle_receipt(message: Message, state: FSMContext):
     pid = add_payment(r[0], message.from_user.id, price, file_id)
     try:
         await bot.send_photo(
-            ADMIN_ID,
-            file_id,
+            ADMIN_ID, file_id,
             caption=f"💳 <b>Новый чек на оплату!</b>\n\n"
                     f"Ресторан: <b>{r[1]}</b>\n"
                     f"ID: {r[0]}\n"
@@ -611,7 +660,7 @@ async def handle_receipt(message: Message, state: FSMContext):
     except Exception as e:
         await message.answer(f"Ошибка: {e}")
 
-# === ДОБАВЛЕНИЕ БЛЮД ===
+# === БЛЮДА ===
 class AddItem(StatesGroup):
     waiting_for_name = State()
     waiting_for_description = State()
@@ -733,10 +782,30 @@ async def reject_order(callback: CallbackQuery):
     await callback.message.answer(f"❌ Заказ #{oid} отклонён.")
     await callback.answer()
 
-# === КЛИЕНТСКАЯ ЧАСТЬ ===
+# === КЛИЕНТ ===
 @router.message(Command("start"))
 async def cmd_start(message: Message, state: FSMContext):
     await state.clear()
+    # Deep link от QR
+    args = message.text.split(maxsplit=1)
+    if len(args) > 1 and args[1].startswith("rest_"):
+        try:
+            rest_id = int(args[1].replace("rest_", ""))
+        except ValueError:
+            rest_id = None
+        if rest_id:
+            r = get_restaurant_by_id(rest_id)
+            if not r or not is_subscription_active(r):
+                await message.answer("❌ Этот ресторан сейчас недоступен.")
+                return
+            text, keyboard = show_menu_for_restaurant(r)
+            if not text:
+                await message.answer(f"Меню ресторана «{r[1]}» пока пусто.")
+                return
+            await message.answer(text, reply_markup=keyboard)
+            return
+
+    # Обычный /start
     r = get_restaurant_by_owner(message.from_user.id)
     if r:
         if is_subscription_active(r):
@@ -767,33 +836,11 @@ async def show_menu(callback: CallbackQuery):
         await callback.message.answer("Этот ресторан недоступен.")
         await callback.answer()
         return
-    items = get_menu_items(rest_id)
-    if not items:
+    text, keyboard = show_menu_for_restaurant(r)
+    if not text:
         await callback.message.answer("Меню пока пусто.")
         await callback.answer()
         return
-    # Применяем дизайн
-    design_key = r[9] if r[9] and r[9] in DESIGNS else 'classic'
-    d = DESIGNS[design_key]
-    header = d['header']
-    title = d['title']
-    item_emoji = d['item']
-    price_suffix = d['price']
-    footer = d['footer']
-    # Формируем красивое превью + список кнопок
-    text = (f"{header}\n"
-            f"🍴 <b>{r[1]}</b>\n"
-            f"{title}\n"
-            f"{footer}\n"
-            f"Выберите блюдо:")
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[])
-    for item in items:
-        keyboard.inline_keyboard.append([
-            InlineKeyboardButton(
-                text=f"{item_emoji} {item[2]} — {item[4]} {price_suffix}",
-                callback_data=f"order_item_{item[0]}"
-            )
-        ])
     await callback.message.answer(text, reply_markup=keyboard)
     await callback.answer()
 
@@ -841,7 +888,6 @@ async def process_order_address(message: Message, state: FSMContext):
     items_text = f"{item[2]} (1 шт.)"
     total = item[4]
     order_id = add_order(rest_id, data['client_name'], data['client_phone'], message.text, items_text, total)
-    # УВЕДОМЛЕНИЕ ВЛАДЕЛЬЦУ
     if r[4]:
         try:
             await bot.send_message(
@@ -856,10 +902,7 @@ async def process_order_address(message: Message, state: FSMContext):
             )
         except:
             pass
-    await message.answer(
-        f"✅ <b>Заказ #{order_id} отправлен!</b>\n"
-        f"Ресторан свяжется с вами."
-    )
+    await message.answer(f"✅ <b>Заказ #{order_id} отправлен!</b>\nРесторан свяжется с вами.")
     await state.clear()
 
 # === ЗАПУСК ===
