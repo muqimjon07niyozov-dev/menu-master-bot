@@ -1,9 +1,9 @@
 import asyncio
 import logging
-import sqlite3
 import os
 from datetime import datetime, timedelta
 
+import psycopg2
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -24,13 +24,15 @@ dp = Dispatcher()
 router = Router()
 dp.include_router(router)
 
-# === БАЗА ДАННЫХ ===
-conn = sqlite3.connect("restaurant_bot.db")
+# === БАЗА ДАННЫХ (PostgreSQL) ===
+DATABASE_URL = os.environ.get("DATABASE_URL")
+conn = psycopg2.connect(DATABASE_URL)
 cursor = conn.cursor()
 
+# Создаём таблицы
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS rest (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     name TEXT NOT NULL,
     address TEXT,
     phone TEXT,
@@ -43,7 +45,7 @@ CREATE TABLE IF NOT EXISTS rest (
 
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS menu (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     rest_id INTEGER,
     name TEXT,
     description TEXT,
@@ -54,7 +56,7 @@ CREATE TABLE IF NOT EXISTS menu (
 
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS orders (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    id SERIAL PRIMARY KEY,
     rest_id INTEGER,
     client_name TEXT,
     client_phone TEXT,
@@ -70,11 +72,11 @@ conn.commit()
 
 # === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
 def get_restaurant_by_owner(owner_id):
-    cursor.execute("SELECT * FROM rest WHERE owner_id=?", (owner_id,))
+    cursor.execute("SELECT * FROM rest WHERE owner_id=%s", (owner_id,))
     return cursor.fetchone()
 
 def get_restaurant_by_id(rest_id):
-    cursor.execute("SELECT * FROM rest WHERE id=?", (rest_id,))
+    cursor.execute("SELECT * FROM rest WHERE id=%s", (rest_id,))
     return cursor.fetchone()
 
 def get_active_restaurants():
@@ -82,31 +84,31 @@ def get_active_restaurants():
     return cursor.fetchall()
 
 def get_menu_items(rest_id):
-    cursor.execute("SELECT * FROM menu WHERE rest_id=?", (rest_id,))
+    cursor.execute("SELECT * FROM menu WHERE rest_id=%s", (rest_id,))
     return cursor.fetchall()
 
 def add_menu_item(rest_id, name, description, price):
-    cursor.execute("INSERT INTO menu (rest_id, name, description, price) VALUES (?,?,?,?)",
+    cursor.execute("INSERT INTO menu (rest_id, name, description, price) VALUES (%s,%s,%s,%s)",
                    (rest_id, name, description, price))
     conn.commit()
 
 def delete_menu_item(item_id):
-    cursor.execute("DELETE FROM menu WHERE id=?", (item_id,))
+    cursor.execute("DELETE FROM menu WHERE id=%s", (item_id,))
     conn.commit()
 
 def add_order(rest_id, client_name, client_phone, client_address, items_text, total):
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("INSERT INTO orders (rest_id, client_name, client_phone, client_address, items_text, total, created_at) VALUES (?,?,?,?,?,?,?)",
+    cursor.execute("INSERT INTO orders (rest_id, client_name, client_phone, client_address, items_text, total, created_at) VALUES (%s,%s,%s,%s,%s,%s,%s)",
                    (rest_id, client_name, client_phone, client_address, items_text, total, created_at))
     conn.commit()
     return cursor.lastrowid
 
 def get_orders_by_restaurant(rest_id, status='new'):
-    cursor.execute("SELECT * FROM orders WHERE rest_id=? AND status=?", (rest_id, status))
+    cursor.execute("SELECT * FROM orders WHERE rest_id=%s AND status=%s", (rest_id, status))
     return cursor.fetchall()
 
 def update_order_status(order_id, new_status):
-    cursor.execute("UPDATE orders SET status=? WHERE id=?", (new_status, order_id))
+    cursor.execute("UPDATE orders SET status=%s WHERE id=%s", (new_status, order_id))
     conn.commit()
 
 # === КЛАВИАТУРЫ ===
@@ -163,7 +165,7 @@ async def process_owner(message: Message, state: FSMContext):
             await message.answer("Некорректный ID. Попробуй ещё раз.")
             return
     data = await state.get_data()
-    cursor.execute("INSERT INTO rest (name, address, phone, owner_id, subscribed, blocked) VALUES (?,?,?,?,?,?)",
+    cursor.execute("INSERT INTO rest (name, address, phone, owner_id, subscribed, blocked) VALUES (%s,%s,%s,%s,%s,%s)",
                    (data['name'], data['address'], data['phone'], owner_id, 1, 0))
     conn.commit()
     await message.answer(f"Ресторан добавлен! Владелец ID: {owner_id}")
@@ -178,7 +180,7 @@ async def cmd_block(message: Message):
         await message.answer("Укажи ID ресторана: /block ID")
         return
     rest_id = int(args[1])
-    cursor.execute("UPDATE rest SET blocked=1 WHERE id=?", (rest_id,))
+    cursor.execute("UPDATE rest SET blocked=1 WHERE id=%s", (rest_id,))
     conn.commit()
     await message.answer(f"Ресторан {rest_id} заблокирован.")
 
@@ -191,7 +193,7 @@ async def cmd_unblock(message: Message):
         await message.answer("Укажи ID ресторана: /unblock ID")
         return
     rest_id = int(args[1])
-    cursor.execute("UPDATE rest SET blocked=0 WHERE id=?", (rest_id,))
+    cursor.execute("UPDATE rest SET blocked=0 WHERE id=%s", (rest_id,))
     conn.commit()
     await message.answer(f"Ресторан {rest_id} разблокирован.")
 
@@ -206,7 +208,7 @@ async def cmd_subscribe(message: Message):
     rest_id = int(args[1])
     days = int(args[2])
     until = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d")
-    cursor.execute("UPDATE rest SET subscribed=1, subscribe_until=? WHERE id=?", (until, rest_id))
+    cursor.execute("UPDATE rest SET subscribed=1, subscribe_until=%s WHERE id=%s", (until, rest_id))
     conn.commit()
     await message.answer(f"Подписка ресторана {rest_id} продлена до {until}")
 
@@ -390,7 +392,7 @@ async def process_order_phone(message: Message, state: FSMContext):
 async def process_order_address(message: Message, state: FSMContext):
     data = await state.get_data()
     item_id = data['item_id']
-    cursor.execute("SELECT * FROM menu WHERE id=?", (item_id,))
+    cursor.execute("SELECT * FROM menu WHERE id=%s", (item_id,))
     item = cursor.fetchone()
     if not item:
         await message.answer("Блюдо не найдено.")
