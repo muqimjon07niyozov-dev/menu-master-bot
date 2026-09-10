@@ -4,6 +4,7 @@ import os
 from datetime import datetime, timedelta
 
 import psycopg2
+from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
 from aiogram.filters import Command
 from aiogram.fsm.context import FSMContext
@@ -12,11 +13,12 @@ from aiogram.types import (
     Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton
 )
 from aiogram.client.default import DefaultBotProperties
-from flask import Flask, request
+from aiogram.webhook.aiohttp_server import SimpleRequestHandler, setup_application
 
 # === НАСТРОЙКИ ===
 BOT_TOKEN = "8890056509:AAFvSsiaD0pZPHGRAa3iWRwfNdae3II7ttc"
 ADMIN_ID = 7758384445
+WEBHOOK_URL = "https://menu-master-bot.onrender.com/webhook"
 
 # === ИНИЦИАЛИЗАЦИЯ ===
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -29,7 +31,6 @@ DATABASE_URL = os.environ.get("DATABASE_URL")
 conn = psycopg2.connect(DATABASE_URL)
 cursor = conn.cursor()
 
-# Создаём таблицы
 cursor.execute('''
 CREATE TABLE IF NOT EXISTS rest (
     id SERIAL PRIMARY KEY,
@@ -70,7 +71,7 @@ CREATE TABLE IF NOT EXISTS orders (
 ''')
 conn.commit()
 
-# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
+# === ФУНКЦИИ ===
 def get_restaurant_by_owner(owner_id):
     cursor.execute("SELECT * FROM rest WHERE owner_id=%s", (owner_id,))
     return cursor.fetchone()
@@ -119,13 +120,14 @@ def cabinet_keyboard():
         [InlineKeyboardButton(text="🛒 Заказы", callback_data="my_orders")],
     ])
 
-# === АДМИН-КОМАНДЫ ===
+# === АДМИН ===
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
     if message.from_user.id != ADMIN_ID:
         await message.answer("Нет доступа.")
         return
-    restaurants = cursor.execute("SELECT * FROM rest").fetchall()
+    cursor.execute("SELECT * FROM rest")
+    restaurants = cursor.fetchall()
     if not restaurants:
         await message.answer("Ресторанов нет.")
         return
@@ -135,6 +137,9 @@ async def cmd_admin(message: Message):
         block = "🚫" if r[6] == 1 else "🟢"
         text += f"ID: {r[0]}\nНазвание: {r[1]}\nВладелец ID: {r[4]}\nПодписка: {status}\nБлок: {block}\n\n"
     await message.answer(text)
+
+class AddRest(StatesGroup):
+    waiting_for_owner = State()
 
 @router.message(Command("addrest"))
 async def cmd_addrest(message: Message, state: FSMContext):
@@ -148,9 +153,6 @@ async def cmd_addrest(message: Message, state: FSMContext):
     await state.update_data(name=args[1], address=args[2], phone=args[3])
     await message.answer("Теперь перешли сообщение от владельца ресторана (или введи его Telegram ID):")
     await state.set_state(AddRest.waiting_for_owner)
-
-class AddRest(StatesGroup):
-    waiting_for_owner = State()
 
 @router.message(AddRest.waiting_for_owner)
 async def process_owner(message: Message, state: FSMContext):
@@ -328,7 +330,7 @@ async def reject_order(callback: CallbackQuery):
     await callback.message.answer(f"Заказ #{order_id} отклонён.")
     await callback.answer()
 
-# === КЛИЕНТСКАЯ ЧАСТЬ ===
+# === КЛИЕНТ ===
 @router.message(Command("start"))
 async def cmd_start(message: Message):
     restaurants = get_active_restaurants()
@@ -398,12 +400,10 @@ async def process_order_address(message: Message, state: FSMContext):
         await message.answer("Блюдо не найдено.")
         await state.clear()
         return
-
     rest_id = item[1]
     items_text = f"{item[2]} (1 шт.)"
     total = item[4]
     order_id = add_order(rest_id, data['client_name'], data['client_phone'], message.text, items_text, total)
-
     restaurant = get_restaurant_by_id(rest_id)
     if restaurant and restaurant[4]:
         try:
@@ -418,24 +418,21 @@ async def process_order_address(message: Message, state: FSMContext):
             )
         except:
             pass
-
     await message.answer(f"Заказ #{order_id} отправлен! Ресторан свяжется с тобой.")
     await state.clear()
 
-# === ЗАПУСК (WEBHOOK) ===
-app = Flask(__name__)
+# === ЗАПУСК (WEBHOOK через aiohttp) ===
+async def on_startup(bot: Bot):
+    await bot.set_webhook(WEBHOOK_URL)
+    print(f"Webhook set to {WEBHOOK_URL}")
 
-@app.route('/webhook', methods=['POST'])
-async def webhook():
-    update = request.get_json()
-    await dp.feed_webhook_update(bot, update)
-    return 'ok'
-
-async def set_webhook():
-    webhook_url = "https://menu-master-bot.onrender.com/webhook"
-    await bot.set_webhook(webhook_url)
+def main():
+    dp.startup.register(on_startup)
+    app = web.Application()
+    SimpleRequestHandler(dispatcher=dp, bot=bot).register(app, path="/webhook")
+    setup_application(app, dp, bot=bot)
+    port = int(os.environ.get("PORT", 5000))
+    web.run_app(app, host="0.0.0.0", port=port)
 
 if __name__ == "__main__":
-    asyncio.run(set_webhook())
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host='0.0.0.0', port=port)
+    main()
