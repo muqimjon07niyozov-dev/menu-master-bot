@@ -4,7 +4,7 @@ from io import BytesIO
 import psycopg2, qrcode
 from aiohttp import web
 from aiogram import Bot, Dispatcher, F, Router
-from aiogram.filters import Command
+from aiogram.filters import Command, StateFilter
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
 from aiogram.types import (Message, CallbackQuery, InlineKeyboardMarkup, InlineKeyboardButton, BufferedInputFile)
@@ -19,28 +19,30 @@ PAYMENT_PHONE = "993337070"
 PRICE_BASIC, PRICE_DESIGN, SUBSCRIPTION_DAYS = 50, 60, 30
 
 CATEGORIES = {"salads":"🥗 Салаты","soups":"🍲 Супы","hot":"🍖 Горячее","fastfood":"🍔 Фастфуд","desserts":"🍰 Десерты","drinks":"🥤 Напитки","other":"🍽 Другое"}
+
 DESIGNS = {
-    "classic":   {"name": "📋 Классик",      "desc": "Строгий",       "header": "━━━━━━━━━━━━━", "item": "▫️", "title": "🍽 Меню",             "price": "сомони", "footer": "━━━━━━━━━━━━━"},
-    "modern":    {"name": "⚡ Модерн",       "desc": "Современный",   "header": "🔥🔥🔥🔥🔥🔥🔥", "item": "⚡", "title": "🍔 МЕНЮ",             "price": " TJS",   "footer": "🔥🔥🔥🔥🔥🔥🔥"},
-    "elegant":   {"name": "✨ Элегант",      "desc": "Премиум",       "header": "✦ ─────────── ✦", "item": "✨", "title": "👑 Избранное",       "price": "сомони", "footer": "✦ ─────────── ✦"},
-    "fun":       {"name": "🎉 Весёлый",      "desc": "Яркий",         "header": "🎉🎊🎈🎊🎉🎊🎈", "item": "🌟", "title": "😋 Что покушаем?",   "price": "сом",    "footer": "🎈🎊🎉🎊🎈🎊🎉"},
-    "night":     {"name": "🌙 Ночной",       "desc": "Тёмный",        "header": "🌙 ─ ─ ─ ─ ─ 🌙", "item": "🍷", "title": "🌙 Ночное меню",     "price": "сомони", "footer": "🌙 ─ ─ ─ ─ ─ 🌙"},
-    "sea":       {"name": "🌊 Морской",      "desc": "Свежий",        "header": "🌊≈≈≈≈≈≈≈🌊",   "item": "🐟", "title": "🐚 Дары моря",       "price": "сомони", "footer": "🌊≈≈≈≈≈≈≈🌊"},
-    "fire":      {"name": "🔥 Огненный",     "desc": "Горячий",       "header": "🔥▬▬🔥▬▬🔥",   "item": "🔥", "title": "🍖 Горячее!",         "price": "сом",    "footer": "🔥▬▬🔥▬▬🔥"},
-    "royal":     {"name": "👑 Королевский",  "desc": "Царский",       "header": "⚜️ ═══════ ⚜️",  "item": "👑", "title": "🏰 Королевский стол", "price": "сомони", "footer": "⚜️ ═══════ ⚜️"},
-    "sakura":    {"name": "🌸 Сакура",       "desc": "Нежный",        "header": "🌸 ⋆｡°✩ ⋆｡°✩ 🌸", "item": "🌸", "title": "🍡 Нежное меню",     "price": "сомони", "footer": "🌸 ⋆｡°✩ ⋆｡°✩ 🌸"},
-    "cafe":      {"name": "☕ Кофейня",      "desc": "Уютный",        "header": "☕ ━━━ ☕ ━━━ ☕", "item": "☕", "title": "🍰 Уютное меню",     "price": "сомони", "footer": "☕ ━━━ ☕ ━━━ ☕"},
-    "kids":      {"name": "🧸 Детский",      "desc": "Милый",         "header": "🧸🎀🧸🎀🧸",     "item": "🎈", "title": "🍭 Для детей",       "price": "сом",    "footer": "🧸🎀🧸🎀🧸"},
-    "sport":     {"name": "💪 Спортивный",   "desc": "Энергичный",    "header": "💪▬▬💪▬▬💪",   "item": "🥩", "title": "🏋️ Спорт-меню",      "price": "сом",    "footer": "💪▬▬💪▬▬💪"},
-    "vegan":     {"name": "🥗 Веган",        "desc": "Здоровый",      "header": "🌱═══════🌱",   "item": "🥬", "title": "🥗 Полезное меню",   "price": "сомони", "footer": "🌱═══════🌱"},
-    "grill":     {"name": "🍖 Гриль",        "desc": "Мясной",        "header": "🔥🍖🔥🍖🔥",     "item": "🍗", "title": "🍖 Мясное меню",     "price": "сом",    "footer": "🔥🍖🔥🍖🔥"},
-    "italy":     {"name": "🇮🇹 Италия",      "desc": "Средиземномор.", "header": "🇮🇹 ═══ 🍕 ═══ 🇮🇹", "item": "🍕", "title": "🍕 Итальянское меню", "price": "сомони", "footer": "🇮🇹 ═══ 🍕 ═══ 🇮🇹"},
-    "asia":      {"name": "🥢 Азия",         "desc": "Восточный",     "header": "🏮═══════🏮",   "item": "🥢", "title": "🍜 Восточное меню",  "price": "сомони", "footer": "🏮═══════🏮"},
-    "burger":    {"name": "🍔 Бургерная",    "desc": "Фастфуд",       "header": "🍔🍟🥤🍔🍟",     "item": "🍔", "title": "🍟 Быстро и вкусно", "price": "сом",    "footer": "🥤🍟🍔🍟🥤"},
-    "sweet":     {"name": "🍰 Сладкий",      "desc": "Десерты",       "header": "🍩🍰🧁🍰🍩",     "item": "🧁", "title": "🍭 Сладкое меню",    "price": "сом",    "footer": "🍩🍰🧁🍰🍩"},
-    "cocktail":  {"name": "🍹 Бар",          "desc": "Напитки",       "header": "🍸━━━🍹━━━🍸",  "item": "🍸", "title": "🍹 Барное меню",     "price": "сомони", "footer": "🍸━━━🍹━━━🍸"},
-    "street":    {"name": "🛵 Стритфуд",     "desc": "Уличная еда",   "header": "🛵▪️▪️▪️🛵",     "item": "🌭", "title": "🌭 Стрит-меню",      "price": "сом",    "footer": "🛵▪️▪️▪️🛵"},
+    "classic":{"name":"📋 Классик","desc":"Строгий","header":"━━━━━━━━━","item":"▫️","title":"🍽 Меню","price":"сомони","footer":"━━━━━━━━━"},
+    "modern":{"name":"⚡ Модерн","desc":"Современный","header":"🔥🔥🔥🔥🔥","item":"⚡","title":"🍔 МЕНЮ","price":" TJS","footer":"🔥🔥🔥🔥🔥"},
+    "elegant":{"name":"✨ Элегант","desc":"Премиум","header":"✦ ───── ✦","item":"✨","title":"👑 Избранное","price":"сомони","footer":"✦ ───── ✦"},
+    "fun":{"name":"🎉 Весёлый","desc":"Яркий","header":"🎉🎊🎈🎊🎉","item":"🌟","title":"😋 Что покушаем?","price":"сом","footer":"🎈🎊🎉🎊🎈"},
+    "night":{"name":"🌙 Ночной","desc":"Тёмный","header":"🌙 ─ ─ ─ 🌙","item":"🍷","title":"🌙 Ночное","price":"сомони","footer":"🌙 ─ ─ ─ 🌙"},
+    "sea":{"name":"🌊 Морской","desc":"Свежий","header":"🌊≈≈≈≈≈🌊","item":"🐟","title":"🐚 Дары моря","price":"сомони","footer":"🌊≈≈≈≈≈🌊"},
+    "fire":{"name":"🔥 Огненный","desc":"Горячий","header":"🔥▬▬🔥▬▬🔥","item":"🔥","title":"🍖 Горячее!","price":"сом","footer":"🔥▬▬🔥▬▬🔥"},
+    "royal":{"name":"👑 Королевский","desc":"Царский","header":"⚜️ ═══ ⚜️","item":"👑","title":"🏰 Королевский стол","price":"сомони","footer":"⚜️ ═══ ⚜️"},
+    "sakura":{"name":"🌸 Сакура","desc":"Нежный","header":"🌸 ⋆｡°✩ 🌸","item":"🌸","title":"🍡 Нежное меню","price":"сомони","footer":"🌸 ⋆｡°✩ 🌸"},
+    "cafe":{"name":"☕ Кофейня","desc":"Уютный","header":"☕ ━ ☕ ━ ☕","item":"☕","title":"🍰 Уютное меню","price":"сомони","footer":"☕ ━ ☕ ━ ☕"},
+    "kids":{"name":"🧸 Детский","desc":"Милый","header":"🧸🎀🧸🎀🧸","item":"🎈","title":"🍭 Для детей","price":"сом","footer":"🧸🎀🧸🎀🧸"},
+    "sport":{"name":"💪 Спортивный","desc":"Энергичный","header":"💪▬💪▬💪","item":"🥩","title":"🏋️ Спорт-меню","price":"сом","footer":"💪▬💪▬💪"},
+    "vegan":{"name":"🥗 Веган","desc":"Здоровый","header":"🌱═══🌱","item":"🥬","title":"🥗 Полезное меню","price":"сомони","footer":"🌱═══🌱"},
+    "grill":{"name":"🍖 Гриль","desc":"Мясной","header":"🔥🍖🔥🍖🔥","item":"🍗","title":"🍖 Мясное меню","price":"сом","footer":"🔥🍖🔥🍖🔥"},
+    "italy":{"name":"🇮🇹 Италия","desc":"Средиземномор.","header":"🇮🇹 ═ 🍕 ═ 🇮🇹","item":"🍕","title":"🍕 Итальянское меню","price":"сомони","footer":"🇮🇹 ═ 🍕 ═ 🇮🇹"},
+    "asia":{"name":"🥢 Азия","desc":"Восточный","header":"🏮═══🏮","item":"🥢","title":"🍜 Восточное меню","price":"сомони","footer":"🏮═══🏮"},
+    "burger":{"name":"🍔 Бургерная","desc":"Фастфуд","header":"🍔🍟🥤🍔🍟","item":"🍔","title":"🍟 Быстро и вкусно","price":"сом","footer":"🥤🍟🍔🍟🥤"},
+    "sweet":{"name":"🍰 Сладкий","desc":"Десерты","header":"🍩🍰🧁🍰🍩","item":"🧁","title":"🍭 Сладкое меню","price":"сом","footer":"🍩🍰🧁🍰🍩"},
+    "cocktail":{"name":"🍹 Бар","desc":"Напитки","header":"🍸━🍹━🍸","item":"🍸","title":"🍹 Барное меню","price":"сомони","footer":"🍸━🍹━🍸"},
+    "street":{"name":"🛵 Стритфуд","desc":"Уличная еда","header":"🛵▪▪▪🛵","item":"🌭","title":"🌭 Стрит-меню","price":"сом","footer":"🛵▪▪▪🛵"},
 }
+
 STATUSES = {"new":"🆕 Новый","accepted":"✅ Принят","cooking":"👨‍🍳 Готовится","ready":"🍽 Готов","delivering":"🚚 В пути","delivered":"🏁 Доставлен","cancelled":"❌ Отменён"}
 
 bot = Bot(token=BOT_TOKEN, default=DefaultBotProperties(parse_mode="HTML"))
@@ -49,40 +51,19 @@ dp = Dispatcher(); router = Router(); dp.include_router(router)
 DATABASE_URL = os.environ.get("DATABASE_URL")
 conn = psycopg2.connect(DATABASE_URL); cursor = conn.cursor()
 
-cursor.execute('''CREATE TABLE IF NOT EXISTS rest (
-    id SERIAL PRIMARY KEY, name TEXT NOT NULL, address TEXT, phone TEXT,
-    owner_id BIGINT, subscribed INTEGER DEFAULT 0, blocked INTEGER DEFAULT 0,
-    subscribe_until TEXT, design TEXT DEFAULT 'none', active_design TEXT DEFAULT 'classic',
-    history TEXT, work_hours TEXT, delivery_price REAL DEFAULT 0, min_order REAL DEFAULT 0,
-    map_link TEXT
-)''')
-for col, ct in [("design","TEXT DEFAULT 'none'"),("active_design","TEXT DEFAULT 'classic'"),
-                ("history","TEXT"),("work_hours","TEXT"),("delivery_price","REAL DEFAULT 0"),
-                ("min_order","REAL DEFAULT 0"),("map_link","TEXT")]:
-    try:
-        cursor.execute(f"ALTER TABLE rest ADD COLUMN IF NOT EXISTS {col} {ct}"); conn.commit()
+cursor.execute('''CREATE TABLE IF NOT EXISTS rest (id SERIAL PRIMARY KEY, name TEXT NOT NULL, address TEXT, phone TEXT, owner_id BIGINT, subscribed INTEGER DEFAULT 0, blocked INTEGER DEFAULT 0, subscribe_until TEXT, design TEXT DEFAULT 'none', active_design TEXT DEFAULT 'classic', history TEXT, work_hours TEXT, delivery_price REAL DEFAULT 0, min_order REAL DEFAULT 0, map_link TEXT, logo_file_id TEXT, banner_file_id TEXT)''')
+for col, ct in [("design","TEXT DEFAULT 'none'"),("active_design","TEXT DEFAULT 'classic'"),("history","TEXT"),("work_hours","TEXT"),("delivery_price","REAL DEFAULT 0"),("min_order","REAL DEFAULT 0"),("map_link","TEXT"),("logo_file_id","TEXT"),("banner_file_id","TEXT")]:
+    try: cursor.execute(f"ALTER TABLE rest ADD COLUMN IF NOT EXISTS {col} {ct}"); conn.commit()
     except: conn.rollback()
 
-cursor.execute('''CREATE TABLE IF NOT EXISTS menu (
-    id SERIAL PRIMARY KEY, rest_id INTEGER, name TEXT, description TEXT,
-    price REAL, category TEXT DEFAULT 'other', photo_id TEXT, stoplist INTEGER DEFAULT 0,
-    FOREIGN KEY(rest_id) REFERENCES rest(id))''')
+cursor.execute('''CREATE TABLE IF NOT EXISTS menu (id SERIAL PRIMARY KEY, rest_id INTEGER, name TEXT, description TEXT, price REAL, category TEXT DEFAULT 'other', photo_id TEXT, stoplist INTEGER DEFAULT 0)''')
 for col, ct in [("category","TEXT DEFAULT 'other'"),("photo_id","TEXT"),("stoplist","INTEGER DEFAULT 0")]:
-    try:
-        cursor.execute(f"ALTER TABLE menu ADD COLUMN IF NOT EXISTS {col} {ct}"); conn.commit()
+    try: cursor.execute(f"ALTER TABLE menu ADD COLUMN IF NOT EXISTS {col} {ct}"); conn.commit()
     except: conn.rollback()
 
-cursor.execute('''CREATE TABLE IF NOT EXISTS orders (
-    id SERIAL PRIMARY KEY, rest_id INTEGER, client_id BIGINT, client_name TEXT,
-    client_phone TEXT, client_address TEXT, items_text TEXT, total REAL, subtotal REAL,
-    delivery_type TEXT DEFAULT 'delivery', promo_code TEXT, discount REAL DEFAULT 0,
-    status TEXT DEFAULT 'new', created_at TEXT, updated_at TEXT,
-    FOREIGN KEY(rest_id) REFERENCES rest(id))''')
-for col, ct in [("subtotal","REAL"),("delivery_type","TEXT DEFAULT 'delivery'"),
-                ("promo_code","TEXT"),("discount","REAL DEFAULT 0"),
-                ("updated_at","TEXT"),("client_id","BIGINT")]:
-    try:
-        cursor.execute(f"ALTER TABLE orders ADD COLUMN IF NOT EXISTS {col} {ct}"); conn.commit()
+cursor.execute('''CREATE TABLE IF NOT EXISTS orders (id SERIAL PRIMARY KEY, rest_id INTEGER, client_id BIGINT, client_name TEXT, client_phone TEXT, client_address TEXT, items_text TEXT, total REAL, subtotal REAL, delivery_type TEXT DEFAULT 'delivery', promo_code TEXT, discount REAL DEFAULT 0, status TEXT DEFAULT 'new', created_at TEXT, updated_at TEXT)''')
+for col, ct in [("subtotal","REAL"),("delivery_type","TEXT DEFAULT 'delivery'"),("promo_code","TEXT"),("discount","REAL DEFAULT 0"),("updated_at","TEXT"),("client_id","BIGINT")]:
+    try: cursor.execute(f"ALTER TABLE orders ADD COLUMN IF NOT EXISTS {col} {ct}"); conn.commit()
     except: conn.rollback()
 
 cursor.execute('''CREATE TABLE IF NOT EXISTS payments (id SERIAL PRIMARY KEY, rest_id INTEGER, owner_id BIGINT, amount INTEGER, receipt_file_id TEXT, status TEXT DEFAULT 'pending', created_at TEXT)''')
@@ -102,8 +83,7 @@ def get_menu_items(rid, cat=None):
     else: cursor.execute("SELECT * FROM menu WHERE rest_id=%s AND stoplist=0", (rid,))
     return cursor.fetchall()
 def search_menu(rid, q):
-    cursor.execute("SELECT * FROM menu WHERE rest_id=%s AND stoplist=0 AND (LOWER(name) LIKE %s OR LOWER(description) LIKE %s)", (rid, f"%{q.lower()}%", f"%{q.lower()}%"))
-    return cursor.fetchall()
+    cursor.execute("SELECT * FROM menu WHERE rest_id=%s AND stoplist=0 AND (LOWER(name) LIKE %s OR LOWER(description) LIKE %s)", (rid, f"%{q.lower()}%", f"%{q.lower()}%")); return cursor.fetchall()
 def get_menu_item(iid):
     cursor.execute("SELECT * FROM menu WHERE id=%s", (iid,)); return cursor.fetchone()
 def add_menu_item(rid, n, d, p, c, ph):
@@ -116,8 +96,7 @@ def update_price(iid, np):
     cursor.execute("UPDATE menu SET price=%s WHERE id=%s", (np, iid)); conn.commit()
 def add_order(rid, cid, cn, cp, ca, it, tot, sub, dt, promo, disc):
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cursor.execute("INSERT INTO orders (rest_id,client_id,client_name,client_phone,client_address,items_text,total,subtotal,delivery_type,promo_code,discount,created_at,updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)",
-                   (rid,cid,cn,cp,ca,it,tot,sub,dt,promo,disc,now,now)); conn.commit(); return cursor.lastrowid
+    cursor.execute("INSERT INTO orders (rest_id,client_id,client_name,client_phone,client_address,items_text,total,subtotal,delivery_type,promo_code,discount,created_at,updated_at) VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)", (rid,cid,cn,cp,ca,it,tot,sub,dt,promo,disc,now,now)); conn.commit(); return cursor.lastrowid
 def get_orders_by_restaurant(rid):
     cursor.execute("SELECT * FROM orders WHERE rest_id=%s ORDER BY id DESC LIMIT 30", (rid,)); return cursor.fetchall()
 def get_client_orders(cid):
@@ -200,14 +179,15 @@ def get_analytics(rid, days=30):
     row = cursor.fetchone(); dl, dr = (row[0],row[1]) if row else (0,0)
     cursor.execute("SELECT status,COUNT(*) FROM orders WHERE rest_id=%s AND created_at>=%s GROUP BY status", (rid,fd))
     sts = dict(cursor.fetchall())
-    cursor.execute("""SELECT m.name, COUNT(*) as cnt FROM orders o JOIN menu m ON o.items_text LIKE '%%'||m.name||'%%' WHERE o.rest_id=%s AND o.created_at>=%s GROUP BY m.name ORDER BY cnt DESC LIMIT 5""", (rid,fd))
+    cursor.execute("""SELECT m.name, COUNT(*) FROM orders o JOIN menu m ON o.items_text LIKE '%%'||m.name||'%%' WHERE o.rest_id=%s AND o.created_at>=%s GROUP BY m.name ORDER BY COUNT(*) DESC LIMIT 5""", (rid,fd))
     top = cursor.fetchall()
     return {"total_orders":to,"revenue":tr,"delivered":dl,"delivered_rev":dr,"statuses":sts,"top_items":top}
 def get_all_clients(rid):
     cursor.execute("SELECT DISTINCT client_id,client_name,client_phone FROM orders WHERE rest_id=%s", (rid,)); return cursor.fetchall()
 def get_all_restaurants_clients(rid):
-    cursor.execute("SELECT DISTINCT client_id FROM orders WHERE rest_id=%s", (rid,)); return [r[0] for r in cursor.fetchall() if r[0]]
-    def cabinet_keyboard(has_design):
+    cursor.execute("SELECT DISTINCT client_id FROM orders WHERE rest_id=%s", (rid,)); return [x[0] for x in cursor.fetchall() if x[0]]
+
+def cabinet_keyboard(has_design):
     kb = [
         [InlineKeyboardButton(text="📝 Добавить блюдо", callback_data="add_item")],
         [InlineKeyboardButton(text="🍽 Мои блюда", callback_data="my_items")],
@@ -216,6 +196,7 @@ def get_all_restaurants_clients(rid):
         [InlineKeyboardButton(text="👥 Клиенты", callback_data="clients")],
         [InlineKeyboardButton(text="📢 Рассылка", callback_data="broadcast")],
         [InlineKeyboardButton(text="🎁 Промокоды", callback_data="my_promos")],
+        [InlineKeyboardButton(text="🖼 Логотип и баннер", callback_data="edit_brand")],
         [InlineKeyboardButton(text="📱 QR-код", callback_data="my_qr")],
         [InlineKeyboardButton(text="ℹ️ О ресторане", callback_data="edit_info")],
     ]
@@ -232,11 +213,11 @@ def design_choice_keyboard():
     items = list(DESIGNS.items())
     for i in range(0, len(items), 2):
         row = [InlineKeyboardButton(text=items[i][1]['name'], callback_data=f"set_design_{items[i][0]}")]
-        if i+1 < len(items):
-            row.append(InlineKeyboardButton(text=items[i+1][1]['name'], callback_data=f"set_design_{items[i+1][0]}"))
+        if i+1 < len(items): row.append(InlineKeyboardButton(text=items[i+1][1]['name'], callback_data=f"set_design_{items[i+1][0]}"))
         kb.append(row)
     kb.append([InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_cabinet")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
+
 def category_choice_keyboard(prefix="newcat"):
     return InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text=n, callback_data=f"{prefix}_{k}")] for k,n in CATEGORIES.items()])
 
@@ -246,11 +227,10 @@ def payment_confirm_keyboard(pid):
         [InlineKeyboardButton(text="❌ Отклонить", callback_data=f"reject_pay_{pid}")],
     ])
 
-def client_categories_keyboard(rid, cats_list, has_cart=False):
+def client_categories_keyboard(rid, cats_list):
     kb = [[InlineKeyboardButton(text=n, callback_data=f"viewcat_{rid}_{k}")] for k,n in cats_list]
     kb.append([InlineKeyboardButton(text="🔍 Поиск", callback_data=f"search_{rid}")])
-    cart_btn = "🛒 Корзина" if not has_cart else "🛒 Корзина (товары есть)"
-    kb.append([InlineKeyboardButton(text=cart_btn, callback_data=f"show_cart_{rid}")])
+    kb.append([InlineKeyboardButton(text="🛒 Корзина", callback_data=f"show_cart_{rid}")])
     kb.append([InlineKeyboardButton(text="⭐ Отзывы", callback_data=f"reviews_{rid}")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
@@ -263,8 +243,7 @@ def order_status_keyboard(oid, cs):
     elif cs in flow:
         idx = flow.index(cs)
         if idx+1 < len(flow):
-            nxt = flow[idx+1]
-            kb.append([InlineKeyboardButton(text=f"➡️ {STATUSES[nxt]}", callback_data=f"setstat_{oid}_{nxt}")])
+            kb.append([InlineKeyboardButton(text=f"➡️ {STATUSES[flow[idx+1]]}", callback_data=f"setstat_{oid}_{flow[idx+1]}")])
         kb.append([InlineKeyboardButton(text="❌ Отменить", callback_data=f"setstat_{oid}_cancelled")])
     return InlineKeyboardMarkup(inline_keyboard=kb)
 
@@ -275,11 +254,9 @@ async def cmd_cancel(message: Message, state: FSMContext):
 @router.message(Command("help"))
 async def cmd_help(message: Message):
     r = get_restaurant_by_owner(message.from_user.id)
-    if r:
-        return await message.answer(f"📖 /mycabinet — кабинет\n💰 {PRICE_BASIC}/{PRICE_DESIGN} сомони\n📞 @MuqimjonNiyozov")
-    if message.from_user.id == ADMIN_ID:
-        return await message.answer("👑 /admin, /addrest, /subscribe, /block, /unblock, /qr, /pending")
-    await message.answer("📖 /start — рестораны\n🍽 Выбирай блюда → корзина → заказ\n📞 @MuqimjonNiyozov")
+    if r: return await message.answer(f"📖 /mycabinet — кабинет\n💰 {PRICE_BASIC}/{PRICE_DESIGN} сомони\n📞 @MuqimjonNiyozov")
+    if message.from_user.id == ADMIN_ID: return await message.answer("👑 /admin, /addrest, /subscribe, /block, /unblock, /qr, /pending")
+    await message.answer("📖 /start — рестораны\n📋 /myorders — мои заказы")
 
 @router.message(Command("admin"))
 async def cmd_admin(message: Message):
@@ -288,8 +265,7 @@ async def cmd_admin(message: Message):
     if not rs: return await message.answer("Ресторанов нет.")
     text = "📋 <b>Рестораны:</b>\n\n"
     for r in rs:
-        a = "✅" if is_subscription_active(r) else "❌"
-        b = "🚫" if r[6]==1 else "🟢"
+        a = "✅" if is_subscription_active(r) else "❌"; b = "🚫" if r[6]==1 else "🟢"
         d = DESIGNS.get(r[8],{}).get('name','—') if r[8] and r[8]!='none' else '—'
         text += f"<b>ID {r[0]}:</b> {r[1]}\nВладелец: {r[4]}\n{a} до {r[7] or '—'} | {b}\n🎨 {d} | 💵 {get_price(r)}\n\n"
     await message.answer(text)
@@ -314,10 +290,9 @@ async def process_owner(message: Message, state: FSMContext):
         try: oid = int(message.text.strip())
         except: return await message.answer("Некорректный ID или /cancel")
     d = await state.get_data()
-    cursor.execute("INSERT INTO rest (name,address,phone,owner_id,subscribed,blocked) VALUES (%s,%s,%s,%s,%s,%s)", (d['name'],d['address'],d['phone'],oid,0,0))
-    conn.commit()
+    cursor.execute("INSERT INTO rest (name,address,phone,owner_id,subscribed,blocked) VALUES (%s,%s,%s,%s,%s,%s)", (d['name'],d['address'],d['phone'],oid,0,0)); conn.commit()
     await message.answer(f"✅ Добавлен! Владелец {oid}\nАктивируй: /subscribe ID 30")
-    try: await bot.send_message(oid, f"🎉 «{d['name']}» добавлен!\n💰 {PRICE_BASIC}/{PRICE_DESIGN} сомони\n📱 Оплата: {PAYMENT_PHONE}\nОтправь фото чека.")
+    try: await bot.send_message(oid, f"🎉 «{d['name']}» добавлен!\n💰 {PRICE_BASIC}/{PRICE_DESIGN}\n📱 Оплата: {PAYMENT_PHONE}\nОтправь фото чека.")
     except: pass
     await state.clear()
 
@@ -434,7 +409,7 @@ async def edit_info(callback: CallbackQuery, state: FSMContext):
 async def info_h(message: Message, state: FSMContext):
     h = "" if message.text.strip() == '-' else message.text
     await state.update_data(history=h)
-    await message.answer("🕐 Часы работы (Пн-Вс 10:00-22:00):")
+    await message.answer("🕐 Часы работы:")
     await state.set_state(EditInfo.waiting_for_hours)
 
 @router.message(EditInfo.waiting_for_hours)
@@ -456,7 +431,7 @@ async def info_min(message: Message, state: FSMContext):
     try: mo = float(message.text.replace(',','.'))
     except: return await message.answer("Число")
     await state.update_data(min_order=mo)
-    await message.answer("🗺 Ссылка на карту (Google Maps) или '-' :")
+    await message.answer("🗺 Ссылка на Google Maps или '-' :")
     await state.set_state(EditInfo.waiting_for_map)
 
 @router.message(EditInfo.waiting_for_map)
@@ -468,6 +443,42 @@ async def info_map(message: Message, state: FSMContext):
         update_restaurant_info(r[0], d['history'], d['hours'], d['del_price'], d['min_order'], mp)
         await message.answer("✅ Информация обновлена!")
     await state.clear()
+
+class EditBrand(StatesGroup):
+    waiting_for_logo = State()
+    waiting_for_banner = State()
+
+@router.callback_query(F.data == "edit_brand")
+async def edit_brand(callback: CallbackQuery, state: FSMContext):
+    r = get_restaurant_by_owner(callback.from_user.id)
+    if not r or not is_subscription_active(r): return await callback.answer("Нет", show_alert=True)
+    await callback.message.answer("🖼 <b>Логотип и баннер</b>\n\n1️⃣ Отправь <b>логотип</b> (квадрат). Или '-' :")
+    await state.set_state(EditBrand.waiting_for_logo); await callback.answer()
+
+@router.message(EditBrand.waiting_for_logo, F.photo)
+async def brand_logo(message: Message, state: FSMContext):
+    r = get_restaurant_by_owner(message.from_user.id)
+    if r:
+        cursor.execute("UPDATE rest SET logo_file_id=%s WHERE id=%s", (message.photo[-1].file_id, r[0])); conn.commit()
+    await message.answer("✅ Логотип сохранён.\n\n2️⃣ Теперь <b>баннер</b> (1200×600). Или '-' :")
+    await state.set_state(EditBrand.waiting_for_banner)
+
+@router.message(EditBrand.waiting_for_logo, F.text == "-")
+async def brand_logo_skip(message: Message, state: FSMContext):
+    await message.answer("Пропущено.\n\n2️⃣ Теперь <b>баннер</b> или '-' :")
+    await state.set_state(EditBrand.waiting_for_banner)
+
+@router.message(EditBrand.waiting_for_banner, F.photo)
+async def brand_banner(message: Message, state: FSMContext):
+    r = get_restaurant_by_owner(message.from_user.id)
+    if r:
+        cursor.execute("UPDATE rest SET banner_file_id=%s WHERE id=%s", (message.photo[-1].file_id, r[0])); conn.commit()
+    await message.answer("✅ Баннер сохранён! Клиенты увидят его при открытии меню.")
+    await state.clear()
+
+@router.message(EditBrand.waiting_for_banner, F.text == "-")
+async def brand_banner_skip(message: Message, state: FSMContext):
+    await message.answer("✅ Готово."); await state.clear()
 
 @router.callback_query(F.data == "my_qr")
 async def show_my_qr(callback: CallbackQuery):
@@ -481,7 +492,7 @@ async def show_my_qr(callback: CallbackQuery):
 async def choose_design(callback: CallbackQuery):
     r = get_restaurant_by_owner(callback.from_user.id)
     if not r or not is_subscription_active(r): return await callback.answer("Нет", show_alert=True)
-    await callback.message.edit_text(f"🎨 Выберите дизайн\n💵 С дизайном: {PRICE_DESIGN}\n💵 Без: {PRICE_BASIC}", reply_markup=design_choice_keyboard())
+    await callback.message.edit_text(f"🎨 <b>Выберите дизайн</b> (20 шт.)\n\n💵 С дизайном: {PRICE_DESIGN}\n💵 Без: {PRICE_BASIC}", reply_markup=design_choice_keyboard())
     await callback.answer()
 
 @router.callback_query(F.data.startswith("set_design_"))
@@ -491,7 +502,9 @@ async def set_design_handler(callback: CallbackQuery):
     k = callback.data.replace("set_design_","")
     if k not in DESIGNS: return await callback.answer("Нет", show_alert=True)
     set_design(r[0], k)
-    await callback.message.edit_text(f"✅ Дизайн: {DESIGNS[k]['name']}\n⚠️ Оплатите {PRICE_DESIGN} сомони.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_cabinet")]]))
+    d = DESIGNS[k]
+    preview = f"{d['header']}\n{d['title']}\n{d['footer']}\n\n{d['item']} Пример — 25 {d['price']}"
+    await callback.message.edit_text(f"✅ Дизайн: <b>{d['name']}</b>\n\n{preview}\n\n⚠️ Оплатите {PRICE_DESIGN} сомони.", reply_markup=InlineKeyboardMarkup(inline_keyboard=[[InlineKeyboardButton(text="⬅️ Назад", callback_data="back_to_cabinet")]]))
     await callback.answer("Готово!")
 
 @router.callback_query(F.data == "remove_design")
@@ -508,11 +521,8 @@ async def pay_subscription(callback: CallbackQuery):
     await callback.message.answer(f"💳 Сумма: <b>{get_price(r)} сомони</b>\n📱 Номер: <code>{PAYMENT_PHONE}</code>\n\nОтправьте фото чека.")
     await callback.answer()
 
-@router.message(F.photo)
-async def handle_receipt(message: Message, state: FSMContext):
-    cs = await state.get_state()
-    if cs and (cs.startswith("AddItem") or cs.startswith("AddPromo") or cs.startswith("EditInfo") or cs.startswith("Broadcast")):
-        return
+@router.message(StateFilter(None), F.photo)
+async def handle_receipt(message: Message):
     r = get_restaurant_by_owner(message.from_user.id)
     if not r: return
     if r[6] == 1: return await message.answer("🚫 Заблокирован.")
@@ -523,7 +533,8 @@ async def handle_receipt(message: Message, state: FSMContext):
         await bot.send_photo(ADMIN_ID, fid, caption=f"💳 Чек\n{r[1]} (ID {r[0]})\nСумма: {price} сомони\nДизайн: {'есть' if r[8] and r[8]!='none' else 'нет'}", reply_markup=payment_confirm_keyboard(pid))
         await message.answer("📨 Чек отправлен админу.")
     except Exception as e: await message.answer(f"Ошибка: {e}")
-        class AddItem(StatesGroup):
+
+class AddItem(StatesGroup):
     waiting_for_category = State()
     waiting_for_name = State()
     waiting_for_description = State()
@@ -605,7 +616,7 @@ async def item_info(callback: CallbackQuery):
     kb = [
         [InlineKeyboardButton(text="✏️ Изменить цену", callback_data=f"editprice_{iid}")],
         [InlineKeyboardButton(text="🗑 Удалить", callback_data=f"del_item_{iid}")],
-        [InlineKeyboardButton(text="🚫 В стоп-лист" if i[7]==0 else "✅ Убрать из стоп-листа", callback_data=f"stop_{iid}")],
+        [InlineKeyboardButton(text="🚫 В стоп-лист" if i[7]==0 else "✅ Из стоп-листа", callback_data=f"stop_{iid}")],
         [InlineKeyboardButton(text="⬅️ Назад", callback_data="my_items_back")],
     ]
     await callback.message.answer(f"<b>{i[2]}</b>\n{i[3]}\n💰 {i[4]} сомони", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
@@ -625,10 +636,8 @@ async def edit_price(callback: CallbackQuery, state: FSMContext):
 async def save_price(message: Message, state: FSMContext):
     try: np = float(message.text.replace(',','.'))
     except: return await message.answer("Число!")
-    d = await state.get_data()
-    update_price(d['item_id'], np)
-    await message.answer(f"✅ Цена обновлена: {np} сомони")
-    await state.clear()
+    d = await state.get_data(); update_price(d['item_id'], np)
+    await message.answer(f"✅ Цена обновлена: {np} сомони"); await state.clear()
 
 @router.callback_query(F.data == "my_items_back")
 async def mi_back(callback: CallbackQuery):
@@ -655,7 +664,7 @@ async def show_orders(callback: CallbackQuery):
     orders = get_orders_by_restaurant(r[0])
     if not orders: return await callback.message.answer("Заказов нет.")
     for o in orders[:10]:
-        text = (f"<b>Заказ #{o[0]}</b> — {STATUSES.get(o[12],o[12])}\n👤 {o[3]}\n📞 {o[4]}\n🏠 {o[5]}\n🚚 {'Доставка' if o[9]=='delivery' else 'Самовывоз'}\n🍽 {o[6]}\n💰 {o[7]} сомони\n📅 {o[10]}")
+        text = f"<b>Заказ #{o[0]}</b> — {STATUSES.get(o[12],o[12])}\n👤 {o[3]}\n📞 {o[4]}\n🏠 {o[5]}\n🚚 {'Доставка' if o[9]=='delivery' else 'Самовывоз'}\n🍽 {o[6]}\n💰 {o[7]} сомони"
         await callback.message.answer(text, reply_markup=order_status_keyboard(o[0], o[12]))
     await callback.answer()
 
@@ -680,11 +689,11 @@ async def analytics(callback: CallbackQuery):
     r = get_restaurant_by_owner(callback.from_user.id)
     if not r or not is_subscription_active(r): return await callback.answer("Нет", show_alert=True)
     a = get_analytics(r[0], 30)
-    text = (f"📊 <b>Аналитика за 30 дней</b>\n\n🛒 Заказов: <b>{a['total_orders']}</b>\n💰 Выручка: <b>{a['revenue']:.0f} сомони</b>\n✅ Доставлено: {a['delivered']}\n💵 Оплачено: {a['delivered_rev']:.0f} сомони\n\n<b>По статусам:</b>\n")
+    text = f"📊 <b>Аналитика за 30 дней</b>\n\n🛒 Заказов: <b>{a['total_orders']}</b>\n💰 Выручка: <b>{a['revenue']:.0f} сомони</b>\n✅ Доставлено: {a['delivered']}\n💵 Оплачено: {a['delivered_rev']:.0f} сомони\n\n<b>По статусам:</b>\n"
     for st, cnt in a['statuses'].items(): text += f"{STATUSES.get(st,st)}: {cnt}\n"
     if a['top_items']:
         text += "\n<b>🔥 Топ блюд:</b>\n"
-        for name, cnt in a['top_items']: text += f"• {name} — {cnt} заказов\n"
+        for name, cnt in a['top_items']: text += f"• {name} — {cnt}\n"
     await callback.message.answer(text); await callback.answer()
 
 @router.callback_query(F.data == "clients")
@@ -693,8 +702,7 @@ async def show_clients(callback: CallbackQuery):
     if not r or not is_subscription_active(r): return await callback.answer("Нет", show_alert=True)
     cl = get_all_clients(r[0])
     text = f"👥 <b>Клиенты ({len(cl)}):</b>\n\n"
-    for c in cl[:50]:
-        text += f"• {c[1] or 'Аноним'} — {c[2] or '—'}\n"
+    for c in cl[:50]: text += f"• {c[1] or 'Аноним'} — {c[2] or '—'}\n"
     if not cl: text += "Пока нет клиентов."
     await callback.message.answer(text); await callback.answer()
 
@@ -705,29 +713,25 @@ class Broadcast(StatesGroup):
 async def broadcast_start(callback: CallbackQuery, state: FSMContext):
     r = get_restaurant_by_owner(callback.from_user.id)
     if not r or not is_subscription_active(r): return await callback.answer("Нет", show_alert=True)
-    await callback.message.answer("📢 Напишите текст рассылки (уйдёт всем клиентам):")
+    await callback.message.answer("📢 Напишите текст рассылки:")
     await state.set_state(Broadcast.waiting_for_text); await callback.answer()
 
 @router.message(Broadcast.waiting_for_text)
 async def broadcast_send(message: Message, state: FSMContext):
     r = get_restaurant_by_owner(message.from_user.id)
     if not r: await state.clear(); return
-    clients = get_all_restaurants_clients(r[0])
-    sent = 0
+    clients = get_all_restaurants_clients(r[0]); sent = 0
     for cid in clients:
         try:
-            await bot.send_message(cid, f"📢 <b>{r[1]}</b>\n\n{message.text}")
-            sent += 1
+            await bot.send_message(cid, f"📢 <b>{r[1]}</b>\n\n{message.text}"); sent += 1
         except: pass
-    await message.answer(f"✅ Отправлено {sent} клиентам из {len(clients)}")
-    await state.clear()
+    await message.answer(f"✅ Отправлено {sent} из {len(clients)}"); await state.clear()
 
 @router.callback_query(F.data == "my_promos")
 async def my_promos(callback: CallbackQuery):
     r = get_restaurant_by_owner(callback.from_user.id)
     if not r or not is_subscription_active(r): return await callback.answer("Нет", show_alert=True)
-    promos = get_promos(r[0])
-    text = "🎁 <b>Промокоды</b>\n\n"
+    promos = get_promos(r[0]); text = "🎁 <b>Промокоды</b>\n\n"
     kb = [[InlineKeyboardButton(text="➕ Создать", callback_data="new_promo")]]
     if promos:
         for p in promos:
@@ -787,8 +791,7 @@ async def del_promo(callback: CallbackQuery):
 async def show_reviews(callback: CallbackQuery):
     rid = int(callback.data.split("_")[1]); r = get_restaurant_by_id(rid)
     if not r: return await callback.answer("Нет", show_alert=True)
-    avg, cnt = get_avg_rating(rid)
-    revs = get_reviews(rid, 10)
+    avg, cnt = get_avg_rating(rid); revs = get_reviews(rid, 10)
     text = f"⭐ <b>Отзывы «{r[1]}»</b>\n\nСредняя: <b>{avg}/5</b> ({cnt})\n\n"
     for rv in revs: text += f"{'⭐'*rv[1]} {rv[0]}\n{rv[2] or ''}\n📅 {rv[3]}\n\n"
     if not revs: text += "Отзывов пока нет."
@@ -820,15 +823,15 @@ async def rev_comment(message: Message, state: FSMContext):
     add_review(d['rest_id'], message.from_user.id, message.from_user.full_name, d['rating'], cm)
     await message.answer("✅ Спасибо за отзыв!"); await state.clear()
 
+class SearchItem(StatesGroup):
+    waiting = State()
+
 @router.callback_query(F.data.startswith("search_"))
 async def search_start(callback: CallbackQuery, state: FSMContext):
     rid = int(callback.data.split("_")[1])
     await state.update_data(rest_id=rid)
-    await callback.message.answer("🔍 Введите название блюда для поиска:")
+    await callback.message.answer("🔍 Введите название блюда:")
     await state.set_state(SearchItem.waiting); await callback.answer()
-
-class SearchItem(StatesGroup):
-    waiting = State()
 
 @router.message(SearchItem.waiting)
 async def search_do(message: Message, state: FSMContext):
@@ -836,13 +839,11 @@ async def search_do(message: Message, state: FSMContext):
     r = get_restaurant_by_id(rid)
     if not r: await state.clear(); return
     items = search_menu(rid, message.text)
-    if not items:
-        return await message.answer("❌ Ничего не найдено. Попробуйте ещё:")
+    if not items: return await message.answer("❌ Ничего не найдено. Попробуйте ещё:")
     dk = r[9] if r[9] and r[9] in DESIGNS else 'classic'; dd = DESIGNS[dk]
-    text = f"🔍 Найдено {len(items)} блюд:"
     kb = [[InlineKeyboardButton(text=f"{dd['item']} {i[2]} — {i[4]} {dd['price']}", callback_data=f"item_{i[0]}")] for i in items]
     kb.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_rest_{rid}")])
-    await message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
+    await message.answer(f"🔍 Найдено {len(items)}:", reply_markup=InlineKeyboardMarkup(inline_keyboard=kb))
     await state.clear()
 
 @router.message(Command("start"))
@@ -882,8 +883,13 @@ async def show_rest_to_client(msg, r):
     info += "\nВыберите категорию:"
     cats = set(i[5] or 'other' for i in items)
     cats_list = [(k, CATEGORIES[k]) for k in CATEGORIES if k in cats]
-    has_cart = len(get_cart(msg.chat.id, r[0])) > 0 if hasattr(msg, 'chat') else False
-    await msg.answer(info, reply_markup=client_categories_keyboard(r[0], cats_list, has_cart))
+    kb = client_categories_keyboard(r[0], cats_list)
+    banner = r[16] if len(r) > 16 else None
+    if banner:
+        try:
+            await msg.answer_photo(banner, caption=info, reply_markup=kb); return
+        except: pass
+    await msg.answer(info, reply_markup=kb)
 
 @router.callback_query(F.data.startswith("show_menu_"))
 async def show_menu_cb(callback: CallbackQuery):
@@ -898,9 +904,12 @@ async def view_cat(callback: CallbackQuery):
     if not r or not is_subscription_active(r): return await callback.answer("Нет", show_alert=True)
     items = get_menu_items(rid, ck)
     if not items: return await callback.answer("Пусто", show_alert=True)
-    dk = r[9] if r[9] and r[9] in DESIGNS else 'classic'; d = DESIGNS[dk]
+    dk = r[9] if r[9] and r[9] in DESIGNS else 'classic'
+    d = DESIGNS[dk]
     text = f"{d['header']}\n{d['title']} — {CATEGORIES[ck]}\n{d['footer']}"
-    kb = [[InlineKeyboardButton(text=f"{d['item']} {i[2]} — {i[4]} {d['price']}", callback_data=f"item_{i[0]}")] for i in items]
+    kb = []
+    for i in items:
+        kb.append([InlineKeyboardButton(text=f"{d['item']} {i[2]} — {i[4]} {d['price']}", callback_data=f"item_{i[0]}")])
     kb.append([InlineKeyboardButton(text="🛒 Корзина", callback_data=f"show_cart_{rid}")])
     kb.append([InlineKeyboardButton(text="⬅️ Назад", callback_data=f"back_to_rest_{rid}")])
     await callback.message.answer(text, reply_markup=InlineKeyboardMarkup(inline_keyboard=kb)); await callback.answer()
@@ -1037,7 +1046,7 @@ async def finalize_order(message: Message, state: FSMContext):
         try:
             promo_line = f"🎁 Промокод: {d['promo']} (-{discount:.0f})\n" if d.get('promo') else ""
             del_line = f"🚚 Доставка: {delivery} сомони\n" if delivery else ""
-            await bot.send_message(r[4], f"🔔 <b>НОВЫЙ ЗАКАЗ #{oid}!</b>\n\n👤 {d['client_name']}\n📞 {d['client_phone']}\n{'🏠 '+addr if d['dtype']=='delivery' else '🏃 Самовывоз'}\n\n🍽 {items_text}\n{promo_line}{del_line}💰 <b>Итого: {total:.0f} сомони</b>\n\n→ /mycabinet → 🛒 Заказы")
+            await bot.send_message(r[4], f"🔔 <b>НОВЫЙ ЗАКАЗ #{oid}!</b>\n\n👤 {d['client_name']}\n📞 {d['client_phone']}\n{'🏠 '+addr if d['dtype']=='delivery' else '🏃 Самовывоз'}\n\n🍽 {items_text}\n{promo_line}{del_line}💰 <b>Итого: {total:.0f} сомони</b>")
         except: pass
     await message.answer(f"✅ <b>Заказ #{oid} оформлен!</b>\n\n💰 Сумма: {total:.0f} сомони")
     await state.clear()
@@ -1049,7 +1058,7 @@ async def my_orders_client(message: Message):
     text = "📋 <b>Ваши заказы:</b>\n\n"
     for o in orders[:10]:
         r = get_restaurant_by_id(o[1])
-        text += f"#{o[0]} — {r[1] if r else '?'}\n{STATUSES.get(o[12],o[12])} | {o[7]} сомони\n📅 {o[10]}\n\n"
+        text += f"#{o[0]} — {r[1] if r else '?'}\n{STATUSES.get(o[12],o[12])} | {o[7]} сомони\n\n"
     await message.answer(text)
 
 async def on_startup(bot: Bot):
